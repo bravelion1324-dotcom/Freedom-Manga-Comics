@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Manga + Comics</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#171717;color:#eee;font-family:Arial,sans-serif}
+header{padding:20px;text-align:center;background:#292929}
+main{max-width:850px;margin:auto;padding:16px}
+section{background:#252525;padding:16px;margin-bottom:18px;border-radius:10px}
+input,select,button{width:100%;padding:12px;margin:7px 0;border:0;border-radius:6px}
+input,select{background:#eee;color:#171717}
+button{background:#7952e8;color:white;font-weight:bold;cursor:pointer}
+button:disabled{opacity:.5}
+.comic{background:#353535;padding:14px;margin:12px 0;border-radius:8px}
+.cover{width:100%;max-height:300px;object-fit:contain;background:#222;border-radius:8px}
+a{color:#c9b8ff}
+.small{font-size:14px;color:#ccc}
+.hidden{display:none}
+.row{display:flex;gap:10px;align-items:center}
+.row button{flex:1}
+</style>
+</head>
+<body>
+<header>
+<h1>Manga + Comics</h1>
+<p>Discover and publish manga and comics</p>
+<p id="accountStatus">Not logged in</p>
+<button id="logoutButton" class="hidden">Log out</button>
+</header>
+
+<main>
+<section id="accountSection">
+<h2>Account</h2>
+<form id="registerForm">
+<h3>Create account</h3>
+<input id="registerUsername" placeholder="Username (3–24 characters)" minlength="3" maxlength="24" required>
+<input id="registerPassword" type="password" placeholder="Password (at least 8 characters)" minlength="8" maxlength="200" required>
+<button type="submit">Register</button>
+</form>
+<hr>
+<form id="loginForm">
+<h3>Log in</h3>
+<input id="loginUsername" placeholder="Username" required>
+<input id="loginPassword" type="password" placeholder="Password" required>
+<button type="submit">Log in</button>
+</form>
+<p id="accountMessage"></p>
+</section>
+
+<section>
+<h2>Browse Manga + Comics</h2>
+<input id="search" type="search" placeholder="Search by title">
+<select id="filter">
+<option value="18">All age ratings</option>
+<option value="7">+7 and below</option>
+<option value="13">+13 and below</option>
+<option value="16">+16 and below</option>
+</select>
+<div id="mangaList">Loading...</div>
+</section>
+
+<section>
+<h2>Publish a comic</h2>
+<p class="small">Log in first. A cover image is required for every new upload.</p>
+<form id="uploadForm">
+<input id="title" placeholder="Comic or manga title" maxlength="100" required>
+<select id="ageRating" required>
+<option value="7">+7</option>
+<option value="13" selected>+13</option>
+<option value="16">+16</option>
+<option value="18">+18</option>
+</select>
+<label for="coverFile">Required cover image (JPEG, PNG or WebP)</label>
+<input id="coverFile" type="file" accept="image/jpeg,image/png,image/webp" required>
+<label for="mangaFile">Comic file (PDF, CBZ or ZIP)</label>
+<input id="mangaFile" type="file" accept=".pdf,.cbz,.zip" required>
+<label><input id="allowAnyoneEdit" type="checkbox" style="width:auto"> Anyone can edit this comic</label>
+<button type="submit">Publish</button>
+</form>
+<p id="uploadMessage"></p>
+</section>
+</main>
+
+<script>
+const API = "http://127.0.0.1:3000/api";
+const ROOT = "http://127.0.0.1:3000";
+let token = localStorage.getItem("mangaToken") || "";
+let currentUser = null;
+let comicsCache = [];
+
+async function restoreLogin() {
+  if (!token) {
+    showAccount();
+    await loadManga();
+    return;
+  }
+
+  try {
+    const result = await apiJSON(API + "/me", {
+      headers: authHeaders()
+    });
+
+    currentUser = result.user;
+  } catch (error) {
+    token = "";
+    currentUser = null;
+    localStorage.removeItem("mangaToken");
+  }
+
+  showAccount();
+  await loadManga();
+}
+
+function authHeaders(extra = {}) {
+  return token ? {...extra, Authorization: "Bearer " + token} : extra;
+}
+
+async function apiJSON(url, options = {}) {
+  const headers = authHeaders(options.headers || {});
+  const response = await fetch(url, {...options, headers});
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || "Request failed.");
+  return result;
+}
+
+function showAccount() {
+  document.getElementById("accountStatus").textContent =
+    currentUser ? "Logged in as " + currentUser.username : "Not logged in";
+  document.getElementById("logoutButton").classList.toggle("hidden", !currentUser);
+  document.getElementById("accountSection").classList.toggle("hidden", !!currentUser);
+}
+
+async function register(event) {
+  event.preventDefault();
+  const message = document.getElementById("accountMessage");
+  message.textContent = "Creating account...";
+  try {
+    const result = await apiJSON(API + "/register", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        username: document.getElementById("registerUsername").value.trim(),
+        password: document.getElementById("registerPassword").value
+      })
+    });
+    token = result.token;
+localStorage.setItem("mangaToken", token);
+currentUser = result.user;
+    message.textContent = "Account created successfully.";
+    document.getElementById("registerForm").reset();
+    showAccount();
+    await loadManga();
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  const message = document.getElementById("accountMessage");
+  message.textContent = "Logging in...";
+  try {
+    const result = await apiJSON(API + "/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        username: document.getElementById("loginUsername").value.trim(),
+        password: document.getElementById("loginPassword").value
+      })
+    });
+    token = result.token;
+    currentUser = result.user;
+    message.textContent = "Logged in successfully.";
+    document.getElementById("loginForm").reset();
+    showAccount();
+    await loadManga();
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+document.getElementById("registerForm").addEventListener("submit", register);
+document.getElementById("loginForm").addEventListener("submit", login);
+
+document.getElementById("logoutButton").addEventListener("click", async () => {
+  try {
+    if (token) {
+      await fetch(API + "/logout", {
+        method: "POST",
+        headers: authHeaders()
+      });
+    }
+  } catch {}
+  token = "";
+currentUser = null;
+localStorage.removeItem("mangaToken");
+showAccount();
+await loadManga();
+});
+
+function makeElement(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+
+async function loadManga() {
+  const list = document.getElementById("mangaList");
+  list.textContent = "Loading...";
+  try {
+    const maxRating = document.getElementById("filter").value;
+    const query = document.getElementById("search").value.trim();
+    const result = await apiJSON(
+      API + "/comics?maxRating=" + encodeURIComponent(maxRating) +
+      "&q=" + encodeURIComponent(query),
+      {headers: authHeaders()}
+    );
+    comicsCache = result;
+    list.replaceChildren();
+
+    if (!result.length) {
+      list.textContent = "No matching manga or comics found.";
+      return;
+    }
+
+    for (const comic of result) {
+      const card = makeElement("article", undefined, "comic");
+
+      if (comic.coverUrl) {
+        const cover = makeElement("img", undefined, "cover");
+        cover.src = ROOT + comic.coverUrl;
+        cover.alt = comic.title + " cover";
+        card.appendChild(cover);
+      } else {
+        card.appendChild(makeElement("p", "No cover available for this older upload.", "small"));
+      }
+
+      card.appendChild(makeElement("h3", comic.title));
+      card.appendChild(makeElement("p",
+        "Age +" + comic.rating + " · Downloads: " + (comic.downloads || 0)));
+
+      const ratings = comic.ratings || [];
+      const average = ratings.length
+        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
+        : 0;
+      card.appendChild(makeElement("p",
+        ratings.length
+          ? "Rating: " + average.toFixed(1) + "/5 (" + ratings.length + " votes)"
+          : "Not rated yet"));
+
+      const choice = document.createElement("select");
+      choice.setAttribute("aria-label", "Choose star rating");
+      choice.add(new Option("Rate this comic", ""));
+      for (let n = 1; n <= 5; n++) {
+        choice.add(new Option("★".repeat(n), String(n)));
+      }
+
+      const rateButton = makeElement("button", "Submit Rating");
+      rateButton.onclick = async () => {
+        if (!choice.value) return alert("Choose a rating.");
+        try {
+          await apiJSON(API + "/comics/" + encodeURIComponent(comic.id) + "/ratings", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({rating: Number(choice.value)})
+          });
+          await loadManga();
+        } catch (error) {
+          alert(error.message);
+        }
+      };
+
+      const download = makeElement("a", "Download Comic");
+      download.href = API + "/comics/" + encodeURIComponent(comic.id) + "/download";
+      download.style.display = "block";
+      download.style.marginTop = "12px";
+      card.append(choice, rateButton, download);
+
+      if (comic.canEdit) {
+        const editTitle = document.createElement("input");
+        editTitle.value = comic.title;
+        editTitle.maxLength = 100;
+        editTitle.setAttribute("aria-label", "Edit title");
+
+        const editAge = document.createElement("select");
+        for (const n of [7, 13, 16, 18]) {
+          editAge.add(new Option("+" + n, String(n), false, n === comic.rating));
+        }
+
+        const saveButton = makeElement("button", "Save Changes");
+        saveButton.onclick = async () => {
+          try {
+            await apiJSON(API + "/comics/" + encodeURIComponent(comic.id), {
+              method: "PATCH",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({
+                title: editTitle.value.trim(),
+                rating: Number(editAge.value)
+              })
+            });
+            await loadManga();
+          } catch (error) {
+            alert(error.message);
+          }
+        };
+
+        card.appendChild(makeElement("h4", "Edit project"));
+        card.append(editTitle, editAge, saveButton);
+
+        if (comic.isOwner) {
+          const permissionLabel = document.createElement("label");
+          const permission = document.createElement("input");
+          permission.type = "checkbox";
+          permission.checked = !!comic.allowAnyoneEdit;
+          permission.style.width = "auto";
+          permissionLabel.append(permission, document.createTextNode(" Anyone can edit"));
+
+          permission.onchange = async () => {
+            try {
+              await apiJSON(API + "/comics/" + encodeURIComponent(comic.id), {
+                method: "PATCH",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({allowAnyoneEdit: permission.checked})
+              });
+              await loadManga();
+            } catch (error) {
+              permission.checked = !permission.checked;
+              alert(error.message);
+            }
+          };
+          card.appendChild(permissionLabel);
+        }
+      }
+
+      list.appendChild(card);
+    }
+  } catch (error) {
+    list.textContent = "Could not load comics: " + error.message;
+  }
+}
+
+document.getElementById("filter").addEventListener("change", loadManga);
+document.getElementById("search").addEventListener("input", loadManga);
+
+document.getElementById("uploadForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const message = document.getElementById("uploadMessage");
+  if (!currentUser || !token) {
+    message.textContent = "Please register or log in before publishing.";
+    return;
+  }
+
+  const title = document.getElementById("title").value.trim();
+  const rating = document.getElementById("ageRating").value;
+  const cover = document.getElementById("coverFile").files[0];
+  const file = document.getElementById("mangaFile").files[0];
+  const allowAnyoneEdit = document.getElementById("allowAnyoneEdit").checked;
+
+  if (!cover || !file) {
+    message.textContent = "Choose both a cover image and a comic file.";
+    return;
+  }
+
+  if (cover.size > 5 * 1024 * 1024) {
+    message.textContent = "The cover image must be 5 MB or smaller.";
+    return;
+  }
+
+  if (file.size > 50 * 1024 * 1024) {
+    message.textContent = "The comic file must be 50 MB or smaller.";
+    return;
+  }
+
+  message.textContent = "Uploading cover...";
+  try {
+    const coverResult = await apiJSON(API + "/covers", {
+      method: "POST",
+      headers: authHeaders({"Content-Type": cover.type}),
+      body: cover
+    });
+
+    message.textContent = "Publishing comic...";
+    const result = await apiJSON(
+      API + "/comics?title=" + encodeURIComponent(title) +
+      "&rating=" + encodeURIComponent(rating) +
+      "&filename=" + encodeURIComponent(file.name) +
+      "&coverName=" + encodeURIComponent(coverResult.coverName),
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: file
+      }
+    );
+
+    await apiJSON(API + "/comics/" + encodeURIComponent(result.id), {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({allowAnyoneEdit})
+    });
+
+    message.textContent = "Published successfully!";
+    event.target.reset();
+    await loadManga();
+  } catch (error) {
+    message.textContent = "Upload failed: " + error.message;
+  }
+});
+
+restoreLogin();
+</script>
+</body>
+</html>
